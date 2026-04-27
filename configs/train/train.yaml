@@ -77,39 +77,41 @@ dataset:
   train:
     target: dataset.codeformer.CodeformerDataset
     params:
-      # training file list path
-      file_list: /mnt/afs/users/konglingshun/dataset/files_extra_2.list
+      # training sharp directory or file list path
+      file_list: ~/datasets/deblur/Gopro/train/target
       file_backend_cfg:
         target: dataset.file_backend.HardDiskBackend
       # Paired crop applied to both sharp and blurred images.
       # Use crop_type: none for full-resolution training.
-      out_size: 512
+      out_size: 256
       crop_type: random
+      path_replace_from: /target/
+      path_replace_to: /input/
 
 train:
   # pretrained sd v2.1 path; only required when resume_full is null
-  sd_path: /mnt/afs/users/konglingshun/code/kpn_lr/v2-1_512-ema-pruned.ckpt
+  sd_path: null
   # optional full ControlLDM checkpoint for fine-tuning, e.g. released model.pth
-  resume_full: null
+  resume_full: model.pth
   # optional ControlNet and LKPN submodule checkpoints for legacy resume
   resume: null
   resume_kpn: null
   # experiment directory path
-  exp_dir: deblur_extra_2
+  exp_dir: experiments/gopro_ft_256_resume_full
 
-  learning_rate: 1e-4
+  learning_rate: 5e-5
 
   batch_size: 64
   num_workers: 8
-  train_steps: 200000
+  train_steps: 100000
   log_every: 50
-  ckpt_every: 4000
+  ckpt_every: 20000
 
 swanlab:
   enabled: true
   mode: cloud
   project: DeblurDiff
-  run_name: null
+  run_name: gopro-ft-256-resume-full
   logdir: null
   flops_image_size: 256
 
@@ -130,11 +132,11 @@ validation:
   better_start: false
   val:
     enabled: true
-    sharp_dir: ~/datasets/deblur/Gopro/test/sharp
-    blur_dir: ~/datasets/deblur/Gopro/test/blur
+    sharp_dir: ~/datasets/deblur/Gopro/test/target
+    blur_dir: ~/datasets/deblur/Gopro/test/input
     max_images: null
   visual:
     enabled: true
-    sharp_dir: ~/datasets/deblur/Gopro/imgs/sharp
-    blur_dir: ~/datasets/deblur/Gopro/imgs/blur
+    sharp_dir: ~/datasets/deblur/Gopro/test/target
+    blur_dir: ~/datasets/deblur/Gopro/test/input
     max_images: 8

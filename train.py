@@ -22,6 +22,7 @@ from utils.pipeline import Pipeline
 
 
 def load_checkpoint_state_dict(path: str) -> Dict[str, torch.Tensor]:
+    path = os.path.expanduser(path)
     checkpoint = torch.load(path, map_location="cpu")
     if isinstance(checkpoint, dict) and "state_dict" in checkpoint:
         checkpoint = checkpoint["state_dict"]

@@ -1,17 +1,36 @@
 from typing import List, Dict
 import random
 import math
+import os
+from pathlib import Path
 
 import numpy as np
 from PIL import Image
 import cv2
 
 
+IMG_EXTENSIONS = {".png", ".jpg", ".jpeg", ".bmp", ".webp"}
+
+
+def _collect_images(root: Path) -> List[str]:
+    return [
+        str(path)
+        for path in sorted(root.rglob("*"))
+        if path.is_file() and path.suffix.lower() in IMG_EXTENSIONS
+    ]
+
+
 def load_file_list(file_list_path: str) -> List[Dict[str, str]]:
     files = []
+    file_list_path = os.path.expanduser(file_list_path)
+    if os.path.isdir(file_list_path):
+        for path in _collect_images(Path(file_list_path)):
+            files.append({"image_path": path, "prompt": ""})
+        return files
+
     with open(file_list_path, "r") as fin:
         for line in fin:
-            path = line.strip()
+            path = os.path.expanduser(line.strip())
             if path:
                 files.append({"image_path": path, "prompt": ""})
     return files

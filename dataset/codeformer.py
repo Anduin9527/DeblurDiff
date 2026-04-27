@@ -66,7 +66,9 @@ class CodeformerDataset(data.Dataset):
             file_list: str,
             file_backend_cfg: Mapping[str, Any],
             out_size: int,
-            crop_type: str
+            crop_type: str,
+            path_replace_from: str = "HR",
+            path_replace_to: str = "Blur",
     ) -> "CodeformerDataset":
         super(CodeformerDataset, self).__init__()
         self.file_list = file_list
@@ -74,6 +76,8 @@ class CodeformerDataset(data.Dataset):
         self.file_backend = instantiate_from_config(file_backend_cfg)
         self.out_size = out_size
         self.crop_type = crop_type
+        self.path_replace_from = path_replace_from
+        self.path_replace_to = path_replace_to
         assert self.crop_type in ["none", "center", "random"]
         assert self.crop_type == "none" or self.out_size > 0
 
@@ -93,7 +97,12 @@ class CodeformerDataset(data.Dataset):
             image_file = self.image_files[index]
 
             gt_path = image_file["image_path"]
-            blur_path = gt_path.replace("HR", "Blur")
+            if self.path_replace_from not in gt_path:
+                raise ValueError(
+                    f"Cannot derive blur path from GT path without token "
+                    f"{self.path_replace_from}: {gt_path}"
+                )
+            blur_path = gt_path.replace(self.path_replace_from, self.path_replace_to, 1)
             prompt = image_file["prompt"]
             img_gt = self.load_gt_image(gt_path)
             img_blur = self.load_gt_image(blur_path)

@@ -47,13 +47,18 @@ CodeformerDataset(
     file_backend_cfg: Mapping[str, Any],
     out_size: int,
     crop_type: Literal["none", "center", "random"],
+    path_replace_from: str = "HR",
+    path_replace_to: str = "Blur",
 ) -> Dataset[(gt, lq, prompt)]
 ```
 
 ### Contracts
 
-- `file_list` contains sharp image paths. The paired blurred path is derived by
-  replacing `HR` with `Blur` in each path.
+- `file_list` may be either a newline-delimited text file of sharp-image paths
+  or a sharp-image directory. Directory mode recursively enumerates supported
+  image files.
+- The paired blurred path is derived by replacing `path_replace_from` with
+  `path_replace_to` in each GT path. The default remains `HR -> Blur`.
 - `crop_type: none` returns full-resolution pairs.
 - `crop_type: center` or `random` applies one crop box to both GT and LQ. If an
   image is smaller than `out_size`, both images are resized by the same scale
