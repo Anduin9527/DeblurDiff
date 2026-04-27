@@ -292,7 +292,6 @@ class SpatialTransformer(nn.Module):
     def grids(self, x):
         b, c, h, w = x.shape
         self.original_size = (b, c, h, w)
-        assert b == 1
         k1, k2 = self.kernel_size
         k1 = min(h, k1)
         k2 = min(w, k2)
@@ -340,8 +339,9 @@ class SpatialTransformer(nn.Module):
         for cnt, each_idx in enumerate(self.idxes):
             i = each_idx['i']
             j = each_idx['j']
-            preds[0, :, i:i + k1, j:j + k2] += outs[cnt, :, :, :]
-            count_mt[0, 0, i:i + k1, j:j + k2] += 1.
+            tile = outs[cnt * b:(cnt + 1) * b, :, :, :]
+            preds[:, :, i:i + k1, j:j + k2] += tile
+            count_mt[:, :, i:i + k1, j:j + k2] += 1.
 
         del outs
         torch.cuda.empty_cache()
@@ -367,8 +367,17 @@ class SpatialTransformer(nn.Module):
         x = rearrange(x, 'b c h w -> b (h w) c').contiguous()
         if self.use_linear:
             x = self.proj_in(x)
+        repeated_context = []
+        for ctx in context:
+            if ctx is not None and hasattr(ctx, "shape") and ctx.shape[0] != b:
+                if b % ctx.shape[0] != 0:
+                    raise ValueError(
+                        f"Cannot repeat context batch {ctx.shape[0]} to match tiled batch {b}"
+                    )
+                ctx = ctx.repeat(b // ctx.shape[0], 1, 1)
+            repeated_context.append(ctx)
         for i, block in enumerate(self.transformer_blocks):
-            x = block(x, context=context[i])
+            x = block(x, context=repeated_context[i])
         if self.use_linear:
             x = self.proj_out(x)
         x = rearrange(x, 'b (h w) c -> b c h w', h=h, w=w).contiguous()
