@@ -92,7 +92,7 @@ by `train.py`.
 | `train.resume_kpn` | `cldm.kpn.load_state_dict()` | Optional pure LKPN checkpoint. Use `null` when training LKPN from scratch. |
 | `train.exp_dir` | output setup | Directory for TensorBoard logs and `checkpoints/*.pt`. |
 | `train.learning_rate` | AdamW optimizer | Single LR applied to ControlNet and LKPN parameter groups. |
-| `train.batch_size` | DataLoader | Per-process batch size passed to `DataLoader`. |
+| `train.batch_size` | DataLoader / Accelerator | Global batch size passed to `DataLoader`; `Accelerator(split_batches=True)` splits it across distributed processes. |
 | `train.num_workers` | DataLoader | Number of worker processes for training data loading. |
 | `train.train_steps` | training loop | Total optimizer steps before stopping. |
 | `train.log_every` | TensorBoard scalar logging | Step interval for averaged loss logging. |

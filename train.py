@@ -164,6 +164,7 @@ def evaluate_loader(
         validation_cfg: DictConfig,
         collect_images: bool,
         swanlab=None,
+        desc: Optional[str] = None,
 ) -> Tuple[float, float, List[object]]:
     from torchmetrics.functional.image import peak_signal_noise_ratio
     from torchmetrics.functional.image import structural_similarity_index_measure
@@ -172,7 +173,15 @@ def evaluate_loader(
     ssim_sum = 0.0
     num_images = 0
     images = []
-    for batch in loader:
+    iterator = tqdm(
+        loader,
+        desc=desc,
+        disable=desc is None,
+        leave=False,
+        dynamic_ncols=True,
+        unit="batch",
+    )
+    for batch in iterator:
         lq_np = batch["lq"].numpy()
         lq_uint8 = np.clip(np.round(lq_np * 255.0), 0, 255).astype(np.uint8)
         restored_np = pipeline.run(
@@ -211,6 +220,7 @@ def run_validation(
         device: torch.device,
         swanlab,
         step: int,
+        writer: Optional[SummaryWriter] = None,
 ) -> None:
     if not loaders:
         return
@@ -219,16 +229,32 @@ def run_validation(
     cldm.eval()
     pipeline = Pipeline(cldm, diffusion, None, device)
     log_data = {}
+    tqdm.write(f"[validation] step {step}: start")
     with torch.no_grad():
         if "val" in loaders:
-            psnr, ssim, _ = evaluate_loader(pipeline, loaders["val"], validation_cfg, False)
+            tqdm.write(f"[validation] step {step}: val images={len(loaders['val'].dataset)}")
+            psnr, ssim, _ = evaluate_loader(
+                pipeline, loaders["val"], validation_cfg, False,
+                desc=f"val@{step}"
+            )
             log_data.update({"metrics/psnr": psnr, "metrics/ssim": ssim})
+            tqdm.write(f"[validation] step {step}: val psnr={psnr:.4f}, ssim={ssim:.4f}")
         if "visual" in loaders:
-            psnr, ssim, images = evaluate_loader(pipeline, loaders["visual"], validation_cfg, True, swanlab)
+            tqdm.write(f"[validation] step {step}: visual images={len(loaders['visual'].dataset)}")
+            psnr, ssim, images = evaluate_loader(
+                pipeline, loaders["visual"], validation_cfg, True, swanlab,
+                desc=f"visual@{step}"
+            )
             log_data.update({"visual/vis_psnr": psnr, "visual/vis_ssim": ssim})
             if images:
                 log_data["visual/pictures"] = images
+            tqdm.write(f"[validation] step {step}: visual psnr={psnr:.4f}, ssim={ssim:.4f}")
+    if writer is not None:
+        for key, value in log_data.items():
+            if key != "visual/pictures":
+                writer.add_scalar(key, value, step)
     log_swanlab(swanlab, log_data, step)
+    tqdm.write(f"[validation] step {step}: done")
     if was_training:
         cldm.train()
 
@@ -378,9 +404,19 @@ def main(args) -> None:
     if accelerator.is_local_main_process:
         writer = SummaryWriter(exp_dir)
         print(f"Training for {max_steps} steps...")
+        pbar = tqdm(
+            total=max_steps,
+            initial=global_step,
+            disable=False,
+            unit="step",
+            dynamic_ncols=True,
+            smoothing=0.01,
+        )
+    else:
+        writer = None
+        pbar = None
 
     while global_step < max_steps:
-        pbar = tqdm(iterable=None, disable=not accelerator.is_local_main_process, unit="batch", total=len(loader))
         for gt, lq, prompt in loader:
             gt = rearrange(gt, "b h w c -> b c h w").contiguous().float().to(device)
             lq = rearrange(lq, "b h w c -> b c h w").contiguous().float().to(device)
@@ -402,8 +438,15 @@ def main(args) -> None:
             for key, value in loss_dict.items():
                 step_losses.setdefault(key, []).append(value.detach())
             epoch_loss.append(loss.detach())
-            pbar.update(1)
-            pbar.set_description(f"Epoch: {epoch:04d}, Global Step: {global_step:07d}, Loss: {loss.item():.6f}")
+            if accelerator.is_local_main_process:
+                pbar.update(1)
+                pbar.set_description(f"train epoch={epoch:04d}")
+                pbar.set_postfix(
+                    step=global_step,
+                    loss=f"{loss.item():.6f}",
+                    lr=f"{opt.param_groups[0]['lr']:.2e}",
+                    refresh=False,
+                )
 
             # Log loss values:
             if global_step % cfg.train.log_every == 0 and global_step > 0:
@@ -435,7 +478,7 @@ def main(args) -> None:
                 if accelerator.is_local_main_process:
                     run_validation(
                         pure_cldm, diffusion, validation_loaders, validation_cfg,
-                        device, swanlab, global_step
+                        device, swanlab, global_step, writer
                     )
                 accelerator.wait_for_everyone()
 
@@ -443,7 +486,6 @@ def main(args) -> None:
             if global_step == max_steps:
                 break
 
-        pbar.close()
         epoch += 1
         avg_epoch_loss = mean_gathered_tensors(accelerator, epoch_loss)
         epoch_loss.clear()
@@ -451,6 +493,7 @@ def main(args) -> None:
             writer.add_scalar("losses/l_total_epoch", avg_epoch_loss, global_step)
 
     if accelerator.is_local_main_process:
+        pbar.close()
         print("done!")
         writer.close()
         if swanlab is not None:

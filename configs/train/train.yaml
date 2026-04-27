@@ -101,7 +101,9 @@ train:
 
   learning_rate: 5e-5
 
-  batch_size: 64
+  # Global batch size. With Accelerator(split_batches=True) and 2 GPUs,
+  # this becomes 64 samples per GPU.
+  batch_size: 128
   num_workers: 8
   train_steps: 100000
   log_every: 50
