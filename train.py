@@ -57,6 +57,13 @@ def build_validation_steps(first_step: int, max_steps: int, num_runs: int) -> Li
     })
 
 
+def build_interval_steps(first_step: int, max_steps: int, every_n_steps: int) -> List[int]:
+    if first_step <= 0 or max_steps <= 0 or every_n_steps <= 0:
+        return []
+    first_step = min(first_step, max_steps)
+    return list(range(first_step, max_steps + 1, every_n_steps))
+
+
 def count_parameters(model: torch.nn.Module) -> Tuple[int, int]:
     params = sum(p.numel() for p in model.parameters())
     trainable_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
@@ -241,8 +248,10 @@ def run_validation(
         swanlab,
         step: int,
         writer: Optional[SummaryWriter] = None,
+        run_val: bool = True,
+        run_visual: bool = True,
 ) -> None:
-    if not loaders:
+    if not loaders or (not run_val and not run_visual):
         return
 
     device = accelerator.device
@@ -251,9 +260,14 @@ def run_validation(
     pipeline = Pipeline(cldm, diffusion, None, device)
     log_data = {}
     if accelerator.is_local_main_process:
-        tqdm.write(f"[validation] step {step}: start")
+        active = []
+        if run_val:
+            active.append("val")
+        if run_visual:
+            active.append("visual")
+        tqdm.write(f"[validation] step {step}: start {'+'.join(active)}")
     with torch.no_grad():
-        if "val" in loaders:
+        if run_val and "val" in loaders:
             if accelerator.is_local_main_process:
                 tqdm.write(
                     f"[validation] step {step}: val local_images={len(loaders['val'].dataset)}, "
@@ -267,7 +281,7 @@ def run_validation(
             log_data.update({"metrics/psnr": psnr, "metrics/ssim": ssim})
             if accelerator.is_local_main_process:
                 tqdm.write(f"[validation] step {step}: val psnr={psnr:.4f}, ssim={ssim:.4f}")
-        if "visual" in loaders and accelerator.is_local_main_process:
+        if run_visual and "visual" in loaders and accelerator.is_local_main_process:
             tqdm.write(f"[validation] step {step}: visual images={len(loaders['visual'].dataset)}")
             psnr_sum, ssim_sum, num_images, images = evaluate_loader(
                 pipeline, loaders["visual"], validation_cfg, True, swanlab,
@@ -409,6 +423,20 @@ def main(args) -> None:
         cfg.train.train_steps,
         validation_cfg.get("num_runs", 5),
     )) if validation_cfg.get("enabled", False) else set()
+    visual_cfg = validation_cfg.get("visual", {})
+    visual_steps = set(build_interval_steps(
+        visual_cfg.get("first_step", 0),
+        cfg.train.train_steps,
+        visual_cfg.get("every_n_steps", 0),
+    )) if validation_cfg.get("enabled", False) and visual_cfg.get("enabled", True) else set()
+    visual_steps.difference_update(validation_steps)
+    if accelerator.is_local_main_process and validation_cfg.get("enabled", False):
+        print(f"Validation steps: {sorted(validation_steps)}")
+        if visual_steps:
+            print(
+                f"Visual validation every {visual_cfg.get('every_n_steps')} steps, "
+                f"first scheduled step {min(visual_steps)}"
+            )
 
     # Prepare models for training:
     cldm.train().to(device)
@@ -509,11 +537,15 @@ def main(args) -> None:
  
                     torch.save(checkpoint, ckpt_path)
 
-            if global_step in validation_steps:
+            run_val = global_step in validation_steps
+            run_visual = global_step in visual_steps
+            if run_val or run_visual:
                 accelerator.wait_for_everyone()
                 run_validation(
                     pure_cldm, diffusion, validation_loaders, validation_cfg,
-                    accelerator, swanlab, global_step, writer
+                    accelerator, swanlab, global_step, writer,
+                    run_val=run_val,
+                    run_visual=run_visual,
                 )
                 accelerator.wait_for_everyone()
 

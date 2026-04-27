@@ -105,7 +105,7 @@ train:
   # this becomes 64 samples per GPU.
   batch_size: 128
   num_workers: 8
-  train_steps: 100000
+  train_steps: 50000
   log_every: 50
   ckpt_every: 20000
 
@@ -120,7 +120,7 @@ swanlab:
 validation:
   enabled: true
   first_step: 1000
-  num_runs: 5
+  num_runs: 4
   batch_size: 1
   num_workers: 0
   steps: 50
@@ -139,6 +139,10 @@ validation:
     max_images: null
   visual:
     enabled: true
+    # 50K training steps / 32 visual epochs ~= 1562 iters per visual check.
+    # train.py drops visual checks that collide with sparse full-val steps.
+    first_step: 1562
+    every_n_steps: 1562
     sharp_dir: ~/datasets/deblur/Gopro/test/target
     blur_dir: ~/datasets/deblur/Gopro/test/input
     max_images: 8

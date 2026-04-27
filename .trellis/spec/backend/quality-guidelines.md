@@ -120,6 +120,7 @@ When `resume_full` is used, `train.py` must still freeze `unet`, `vae`, and
 
 ```python
 build_validation_steps(first_step: int, max_steps: int, num_runs: int) -> list[int]
+build_interval_steps(first_step: int, max_steps: int, every_n_steps: int) -> list[int]
 PairedDirDataset(sharp_dir: str, blur_dir: str, max_images: int | None = None)
 Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
 ```
@@ -129,8 +130,13 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
 - SwanLab logging is main-process only. Non-main distributed processes must not
   initialize SwanLab or upload images.
 - Regular validation is sharded across distributed ranks and then reduced via
-  scalar PSNR/SSIM sums and image counts. The visual split is small and only the
-  main process uploads SwanLab images.
+  scalar PSNR/SSIM sums and image counts.
+- Visual validation uses its own `validation.visual.first_step` +
+  `validation.visual.every_n_steps` interval schedule. Keep it offset from
+  regular validation steps so long full validation and visual uploads do not
+  run in the same training step; the training loop drops visual steps that
+  collide with regular validation. The visual split is small and only the main
+  process uploads SwanLab images.
 - `build_validation_steps(1000, 10000, 5)` must produce
   `[1000, 3250, 5500, 7750, 10000]`.
 - FLOPs are approximate 256x256, batch-1, single `ControlLDM.forward()` FLOPs;
@@ -159,8 +165,10 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
 
 - Good: 2-GPU training logs SwanLab once, shards regular validation across both
   ranks, and only uploads visual images from the main process.
-- Base: `validation.num_runs: 5` and `train.train_steps: 10000` validates only
-  five times.
+- Base: `validation.num_runs: 4` and `train.train_steps: 50000` runs regular
+  validation at `[1000, 17333, 33667, 50000]`. For a 32-point visual monitor
+  cadence across 50K optimizer steps, use
+  `validation.visual.every_n_steps: 1562`.
 - Bad: running full regular validation only on rank 0 while other ranks wait at
   a collective can hit the NCCL watchdog timeout on long validation runs.
 
@@ -171,7 +179,8 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
   `utils/pipeline.py`.
 - Dataset smoke test with two paired images validates length, shape, dtype, and
   value ranges.
-- Validation schedule smoke test checks the 10K-step example.
+- Validation schedule smoke test checks the 10K-step example and the active
+  50K-step regular/visual split schedules.
 
 ### 7. Wrong vs Correct
 
@@ -187,8 +196,7 @@ if accelerator.is_local_main_process:
 
 ```python
 accelerator.wait_for_everyone()
-if accelerator.is_local_main_process:
-    run_validation(...)
+run_validation(..., run_val=run_val, run_visual=run_visual)
 accelerator.wait_for_everyone()
 ```
 

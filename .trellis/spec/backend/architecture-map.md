@@ -90,8 +90,8 @@ Inference:
   implements the latent KPN MSE term in `model/gaussian_diffusion.py` and does
   not decode KPN output for a pixel-space loss.
 - The paper reports batch size 128, learning rate `5e-5`, and 100K iterations.
-  The checked-in config uses batch size 64, learning rate `1e-4`, and 200K
-  steps.
+  The checked-in GoPro fine-tuning config uses batch size 128, learning rate
+  `5e-5`, and 50K steps when resuming from the released full checkpoint.
 - The dataset path reads pre-generated `HR`/`Blur` image pairs. Synthetic
   degradation utilities remain in `dataset/degradation.py`, but they are not
   part of the active `CodeformerDataset` config interface.
