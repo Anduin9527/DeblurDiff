@@ -128,6 +128,9 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
 
 - SwanLab logging is main-process only. Non-main distributed processes must not
   initialize SwanLab or upload images.
+- Regular validation is sharded across distributed ranks and then reduced via
+  scalar PSNR/SSIM sums and image counts. The visual split is small and only the
+  main process uploads SwanLab images.
 - `build_validation_steps(1000, 10000, 5)` must produce
   `[1000, 3250, 5500, 7750, 10000]`.
 - FLOPs are approximate 256x256, batch-1, single `ControlLDM.forward()` FLOPs;
@@ -154,12 +157,12 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
 
 ### 5. Good/Base/Bad Cases
 
-- Good: 2-GPU training logs SwanLab once, while all processes wait during
-  validation.
+- Good: 2-GPU training logs SwanLab once, shards regular validation across both
+  ranks, and only uploads visual images from the main process.
 - Base: `validation.num_runs: 5` and `train.train_steps: 10000` validates only
   five times.
-- Bad: running validation only on rank 0 without `accelerator.wait_for_everyone`
-  around it can desynchronize distributed training collectives.
+- Bad: running full regular validation only on rank 0 while other ranks wait at
+  a collective can hit the NCCL watchdog timeout on long validation runs.
 
 ### 6. Tests Required
 

@@ -1,13 +1,14 @@
 import os
 from argparse import ArgumentParser
+from datetime import timedelta
 from typing import Dict, List, Optional, Tuple
 
 from omegaconf import DictConfig, OmegaConf
 import torch
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Subset
 from torchvision.utils import make_grid
 from accelerate import Accelerator
-from accelerate.utils import set_seed
+from accelerate.utils import InitProcessGroupKwargs, set_seed
 from einops import rearrange
 from tqdm import tqdm
 from torch.utils.tensorboard import SummaryWriter
@@ -114,7 +115,11 @@ def estimate_forward_flops(
             cldm.train()
 
 
-def make_validation_loaders(cfg: DictConfig) -> Dict[str, DataLoader]:
+def make_validation_loaders(
+        cfg: DictConfig,
+        process_index: int = 0,
+        num_processes: int = 1,
+) -> Dict[str, DataLoader]:
     validation_cfg = cfg.get("validation", {})
     if not validation_cfg.get("enabled", False):
         return {}
@@ -131,6 +136,9 @@ def make_validation_loaders(cfg: DictConfig) -> Dict[str, DataLoader]:
             blur_dir=split_cfg.blur_dir,
             max_images=split_cfg.get("max_images"),
         )
+        if split == "val" and num_processes > 1:
+            indices = list(range(process_index, len(dataset), num_processes))
+            dataset = Subset(dataset, indices)
         loaders[split] = DataLoader(
             dataset=dataset,
             batch_size=batch_size,
@@ -165,7 +173,7 @@ def evaluate_loader(
         collect_images: bool,
         swanlab=None,
         desc: Optional[str] = None,
-) -> Tuple[float, float, List[object]]:
+) -> Tuple[float, float, int, List[object]]:
     from torchmetrics.functional.image import peak_signal_noise_ratio
     from torchmetrics.functional.image import structural_similarity_index_measure
 
@@ -209,7 +217,19 @@ def evaluate_loader(
                 grid = make_grid(torch.stack([lq[i], restored[i], gt[i]], dim=0), nrow=3)
                 images.append(swanlab.Image(_swanlab_grid_image(grid), caption=str(name)))
 
-    return psnr_sum / num_images, ssim_sum / num_images, images
+    return psnr_sum, ssim_sum, num_images, images
+
+
+def gather_validation_metrics(
+        accelerator: Accelerator,
+        psnr_sum: float,
+        ssim_sum: float,
+        num_images: int,
+) -> Tuple[float, float]:
+    local = torch.tensor([psnr_sum, ssim_sum, float(num_images)], device=accelerator.device)
+    gathered = accelerator.gather(local.reshape(1, 3)).sum(dim=0)
+    count = max(gathered[2].item(), 1.0)
+    return gathered[0].item() / count, gathered[1].item() / count
 
 
 def run_validation(
@@ -217,7 +237,7 @@ def run_validation(
         diffusion: Diffusion,
         loaders: Dict[str, DataLoader],
         validation_cfg: DictConfig,
-        device: torch.device,
+        accelerator: Accelerator,
         swanlab,
         step: int,
         writer: Optional[SummaryWriter] = None,
@@ -225,36 +245,47 @@ def run_validation(
     if not loaders:
         return
 
+    device = accelerator.device
     was_training = cldm.training
     cldm.eval()
     pipeline = Pipeline(cldm, diffusion, None, device)
     log_data = {}
-    tqdm.write(f"[validation] step {step}: start")
+    if accelerator.is_local_main_process:
+        tqdm.write(f"[validation] step {step}: start")
     with torch.no_grad():
         if "val" in loaders:
-            tqdm.write(f"[validation] step {step}: val images={len(loaders['val'].dataset)}")
-            psnr, ssim, _ = evaluate_loader(
+            if accelerator.is_local_main_process:
+                tqdm.write(
+                    f"[validation] step {step}: val local_images={len(loaders['val'].dataset)}, "
+                    f"world_size={accelerator.num_processes}"
+                )
+            psnr_sum, ssim_sum, num_images, _ = evaluate_loader(
                 pipeline, loaders["val"], validation_cfg, False,
-                desc=f"val@{step}"
+                desc=f"val@{step}" if accelerator.is_local_main_process else None
             )
+            psnr, ssim = gather_validation_metrics(accelerator, psnr_sum, ssim_sum, num_images)
             log_data.update({"metrics/psnr": psnr, "metrics/ssim": ssim})
-            tqdm.write(f"[validation] step {step}: val psnr={psnr:.4f}, ssim={ssim:.4f}")
-        if "visual" in loaders:
+            if accelerator.is_local_main_process:
+                tqdm.write(f"[validation] step {step}: val psnr={psnr:.4f}, ssim={ssim:.4f}")
+        if "visual" in loaders and accelerator.is_local_main_process:
             tqdm.write(f"[validation] step {step}: visual images={len(loaders['visual'].dataset)}")
-            psnr, ssim, images = evaluate_loader(
+            psnr_sum, ssim_sum, num_images, images = evaluate_loader(
                 pipeline, loaders["visual"], validation_cfg, True, swanlab,
                 desc=f"visual@{step}"
             )
+            psnr = psnr_sum / max(num_images, 1)
+            ssim = ssim_sum / max(num_images, 1)
             log_data.update({"visual/vis_psnr": psnr, "visual/vis_ssim": ssim})
             if images:
                 log_data["visual/pictures"] = images
             tqdm.write(f"[validation] step {step}: visual psnr={psnr:.4f}, ssim={ssim:.4f}")
-    if writer is not None:
+    if writer is not None and accelerator.is_local_main_process:
         for key, value in log_data.items():
             if key != "visual/pictures":
                 writer.add_scalar(key, value, step)
-    log_swanlab(swanlab, log_data, step)
-    tqdm.write(f"[validation] step {step}: done")
+    if accelerator.is_local_main_process:
+        log_swanlab(swanlab, log_data, step)
+        tqdm.write(f"[validation] step {step}: done")
     if was_training:
         cldm.train()
 
@@ -292,7 +323,8 @@ def log_txt_as_img(wh, xc):
 
 def main(args) -> None:
     # Setup accelerator:
-    accelerator = Accelerator(split_batches=True)
+    ddp_timeout = InitProcessGroupKwargs(timeout=timedelta(hours=4))
+    accelerator = Accelerator(split_batches=True, kwargs_handlers=[ddp_timeout])
     set_seed(231)
     device = accelerator.device
     cfg = OmegaConf.load(args.config)
@@ -366,7 +398,11 @@ def main(args) -> None:
     )
     if accelerator.is_local_main_process:
         print(f"Dataset contains {len(dataset):,} images from {dataset.file_list}")
-    validation_loaders = make_validation_loaders(cfg) if accelerator.is_local_main_process else {}
+    validation_loaders = make_validation_loaders(
+        cfg,
+        process_index=accelerator.process_index,
+        num_processes=accelerator.num_processes,
+    )
     validation_cfg = cfg.get("validation", {})
     validation_steps = set(build_validation_steps(
         validation_cfg.get("first_step", 1000),
@@ -475,11 +511,10 @@ def main(args) -> None:
 
             if global_step in validation_steps:
                 accelerator.wait_for_everyone()
-                if accelerator.is_local_main_process:
-                    run_validation(
-                        pure_cldm, diffusion, validation_loaders, validation_cfg,
-                        device, swanlab, global_step, writer
-                    )
+                run_validation(
+                    pure_cldm, diffusion, validation_loaders, validation_cfg,
+                    accelerator, swanlab, global_step, writer
+                )
                 accelerator.wait_for_everyone()
 
             accelerator.wait_for_everyone()
