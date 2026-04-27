@@ -194,7 +194,7 @@ class _idynamic(Function):
     def backward(ctx, grad_output):
         assert grad_output.is_cuda
         if not grad_output.is_contiguous():
-            grad_output.contiguous()
+            grad_output = grad_output.contiguous()
         input, weight = ctx.saved_tensors
         stride, padding, dilation = ctx.stride, ctx.padding, ctx.dilation
 
@@ -277,10 +277,21 @@ class IDynamicConv(nn.Module):
 
     def forward(self, x, weight):
         b, c, h, w = weight.shape
-
+        output_dtype = x.dtype
+        x = x.contiguous().float()
+        weight = weight.contiguous().float()
         weight = weight.view(b, c // (self.kernel_size * self.kernel_size), self.kernel_size, self.kernel_size, h, w)
-        out = _idynamic_cuda(x, weight, stride=1, padding=(self.kernel_size - 1) // 2)
-        return out
+
+        # The CuPy kernel is safest with one sample per launch; earlier batch
+        # launches can surface as asynchronous illegal memory accesses later.
+        if b == 1:
+            out = _idynamic_cuda(x, weight, stride=1, padding=(self.kernel_size - 1) // 2)
+        else:
+            out = torch.cat([
+                _idynamic_cuda(x[i:i + 1], weight[i:i + 1], stride=1, padding=(self.kernel_size - 1) // 2)
+                for i in range(b)
+            ], dim=0)
+        return out.to(output_dtype)
 
 
 class LKPN(nn.Module):
@@ -307,4 +318,3 @@ class LKPN(nn.Module):
         result = self.idy_conv(x, kernel)+x
 
         return result
-

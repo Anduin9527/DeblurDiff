@@ -196,6 +196,10 @@ accelerator.wait_for_everyone()
   `vae`, and `clip`.
 - Do not assume CPU/MPS support for LKPN/EAC. `model/lkpn.py` depends on CuPy
   CUDA dynamic convolution.
+- `IDynamicConv` launches the CuPy dynamic-convolution kernel per sample and
+  casts inputs/weights to contiguous `float32` before launch. This avoids
+  asynchronous illegal memory accesses seen with batched CuPy launches and
+  autocast dtypes.
 - Do not add new absolute author-machine paths to committed config or shell
   scripts. The current absolute paths are legacy artifacts to replace when
   making runnable experiments.
