@@ -97,7 +97,8 @@ class Pipeline:
         pos_prompt: str,
         neg_prompt: str,
         cfg_scale: float,
-        better_start: float
+        better_start: float,
+        progress: bool = True
     ) -> torch.Tensor:
         ### preprocess
         bs, _, ori_h, ori_w = clean.shape
@@ -136,8 +137,8 @@ class Pipeline:
         sampler = SpacedSampler(self.diffusion.betas)
         z = sampler.sample(
             model=self.cldm, device=self.device, steps=steps, batch_size=bs, x_size=(4, h // 8, w // 8),
-            cond=cond, uncond=uncond, cfg_scale=cfg_scale, x_T=x_T, progress=True,
-            progress_leave=True, cond_fn=self.cond_fn, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
+            cond=cond, uncond=uncond, cfg_scale=cfg_scale, x_T=x_T, progress=progress,
+            progress_leave=progress, cond_fn=self.cond_fn, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
         )
         if not tiled:
             x = self.cldm.vae_decode(z)
@@ -160,7 +161,8 @@ class Pipeline:
         pos_prompt: str,
         neg_prompt: str,
         cfg_scale: float,
-        better_start: bool
+        better_start: bool,
+        progress: bool = True
     ) -> np.ndarray:
         # image to tensor
         lq = torch.tensor((lq / 255.).clip(0, 1), dtype=torch.float32, device=self.device)
@@ -170,7 +172,7 @@ class Pipeline:
         clean = lq
         sample = self.run_diff(
             clean, steps, strength, tiled, tile_size, tile_stride,
-            pos_prompt, neg_prompt, cfg_scale, better_start
+            pos_prompt, neg_prompt, cfg_scale, better_start, progress
         )
         # colorfix (borrowed from StableSR, thanks for their work)
         sample = (sample + 1) / 2
@@ -179,5 +181,3 @@ class Pipeline:
         sample = rearrange(sample * 255., "n c h w -> n h w c")
         sample = sample.contiguous().clamp(0, 255).to(torch.uint8).cpu().numpy()
         return sample
-
-

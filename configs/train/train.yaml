@@ -81,29 +81,60 @@ dataset:
       file_list: /mnt/afs/users/konglingshun/dataset/files_extra_2.list
       file_backend_cfg:
         target: dataset.file_backend.HardDiskBackend
+      # Paired crop applied to both sharp and blurred images.
+      # Use crop_type: none for full-resolution training.
       out_size: 512
-      crop_type: center
-      blur_kernel_size: 41
-      kernel_list: ['iso', 'aniso']
-      kernel_prob: [0.5, 0.5]
-      blur_sigma: [0.1, 12]
-      downsample_range: [1, 12]
-      noise_range: [0, 15]
-      jpeg_range: [30, 100]
+      crop_type: random
 
 train:
-  # pretrained sd v2.1 path
+  # pretrained sd v2.1 path; only required when resume_full is null
   sd_path: /mnt/afs/users/konglingshun/code/kpn_lr/v2-1_512-ema-pruned.ckpt
+  # optional full ControlLDM checkpoint for fine-tuning, e.g. released model.pth
+  resume_full: null
+  # optional ControlNet and LKPN submodule checkpoints for legacy resume
+  resume: null
+  resume_kpn: null
   # experiment directory path
   exp_dir: deblur_extra_2
 
   learning_rate: 1e-4
-  eta_min: 1e-7
-  T_max: 50000
 
   batch_size: 64
   num_workers: 8
   train_steps: 200000
   log_every: 50
   ckpt_every: 4000
-  image_every: 1000
+
+swanlab:
+  enabled: true
+  mode: cloud
+  project: DeblurDiff
+  run_name: null
+  logdir: null
+  flops_image_size: 256
+
+validation:
+  enabled: true
+  first_step: 1000
+  num_runs: 5
+  batch_size: 1
+  num_workers: 0
+  steps: 50
+  strength: 1.0
+  tiled: false
+  tile_size: 512
+  tile_stride: 256
+  pos_prompt: ""
+  neg_prompt: "low quality, blurry, low-resolution, noisy, unsharp, weird textures"
+  cfg_scale: 1.0
+  better_start: false
+  val:
+    enabled: true
+    sharp_dir: ~/datasets/deblur/Gopro/test/sharp
+    blur_dir: ~/datasets/deblur/Gopro/test/blur
+    max_images: null
+  visual:
+    enabled: true
+    sharp_dir: ~/datasets/deblur/Gopro/imgs/sharp
+    blur_dir: ~/datasets/deblur/Gopro/imgs/blur
+    max_images: 8

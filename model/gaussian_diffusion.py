@@ -100,7 +100,7 @@ class Diffusion(nn.Module):
 
         return loss
 
-    def p_losses(self, model, x_start, t, cond):
+    def p_losses(self, model, x_start, t, cond, return_dict=False):
         noise = torch.randn_like(x_start)
         x_noisy = self.q_sample(x_start=x_start, t=t, noise=noise)
         model_output,lr_kpn = model(x_noisy, t, cond)
@@ -116,5 +116,11 @@ class Diffusion(nn.Module):
 
         loss_simple = self.get_loss(model_output, target, mean=False).mean()
         loss_kpn = self.get_loss(lr_kpn, x_start, mean=False).mean()
-        loss = loss_kpn+loss_simple
+        loss = loss_kpn + loss_simple
+        if return_dict:
+            return {
+                "losses/l_total": loss,
+                "losses/l_denoise": loss_simple,
+                "losses/l_kpn_latent": loss_kpn,
+            }
         return loss

@@ -41,8 +41,9 @@ top-level scripts are thin entry points; most behavior lives in `model/`,
 |   |-- cond_fn.py               # optional restoration guidance losses
 |   `-- common.py                # config instantiation, tiling, wavelet helpers
 `-- dataset/
-    |-- codeformer.py            # paired HR/Blur dataset used by train.py
-    |-- degradation.py           # synthetic degradation utilities, currently not used by __getitem__
+    |-- codeformer.py            # paired HR/Blur dataset and paired crop used by train.py
+    |-- paired_dir.py            # sharp_dir/blur_dir paired validation dataset
+    |-- degradation.py           # synthetic degradation utilities, not used by CodeformerDataset
     |-- file_backend.py          # hard-disk and Petrel-style storage backends
     `-- utils.py                 # file-list and crop helpers
 ```

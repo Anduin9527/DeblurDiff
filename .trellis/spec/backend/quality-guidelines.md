@@ -13,10 +13,14 @@ shape/device checks over broad refactors.
 
 - Preserve existing config-driven construction via `target` and `params`.
   Prefer adding config fields over hard-coded paths or hyperparameters.
+- Treat the local macOS workspace as an editing workspace, not the development
+  runtime. GPU/runtime checks should run on the configured Ubuntu server.
 - Keep tensor ranges explicit:
   - GT images in training are expected in `[-1, 1]`.
   - LQ/blurry conditioning images are expected in `[0, 1]`.
   - VAE latents are scaled by `latent_scale_factor`.
+- Keep paired dataset transforms spatially identical for GT/LQ images. Random
+  crop must sample one crop box and apply it to both images.
 - Keep model interface contracts stable unless updating all call sites:
   - `ControlLDM.forward(x_noisy, t, cond) -> (eps, lr_kpn)`.
   - `cond` must contain `c_txt` and `c_img`.
@@ -27,6 +31,158 @@ shape/device checks over broad refactors.
 - For large-image support, use the existing tiled helpers in `utils.common`,
   `model.cldm`, `utils.pipeline`, and `utils.sampler` instead of introducing a
   separate tiling convention.
+
+## Dataset Config Contract
+
+### Scope / Trigger
+
+Use this contract when editing `dataset/codeformer.py`,
+`configs/train/*.yaml`, or `train.py` dataset consumption.
+
+### Signature
+
+```python
+CodeformerDataset(
+    file_list: str,
+    file_backend_cfg: Mapping[str, Any],
+    out_size: int,
+    crop_type: Literal["none", "center", "random"],
+) -> Dataset[(gt, lq, prompt)]
+```
+
+### Contracts
+
+- `file_list` contains sharp image paths. The paired blurred path is derived by
+  replacing `HR` with `Blur` in each path.
+- `crop_type: none` returns full-resolution pairs.
+- `crop_type: center` or `random` applies one crop box to both GT and LQ. If an
+  image is smaller than `out_size`, both images are resized by the same scale
+  before cropping.
+- `__getitem__()` returns `gt` as RGB `float32` in `[-1, 1]`, `lq` as RGB
+  `float32` in `[0, 1]`, and `prompt` as a string.
+
+### Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| `crop_type` not in `none/center/random` | Dataset construction fails. |
+| `crop_type != none` and `out_size <= 0` | Dataset construction fails. |
+| GT and LQ spatial sizes differ | `__getitem__()` raises `ValueError`. |
+| Legacy synthetic degradation params in YAML | Config instantiation fails; remove them unless the dataset implementation actually uses them. |
+
+## Training Config Contract
+
+### Scope / Trigger
+
+Use this contract when editing `configs/train/*.yaml` or adding fields consumed
+by `train.py`.
+
+### Active Fields
+
+| Field | Consumer | Contract |
+|-------|----------|----------|
+| `train.sd_path` | `ControlLDM.load_pretrained_sd()` | Stable Diffusion 2.1 checkpoint. Required only when `resume_full` is `null`. |
+| `train.resume_full` | `ControlLDM.load_state_dict()` | Optional full `ControlLDM.state_dict()` for fine-tuning released inference checkpoints. Takes precedence over `sd_path` and submodule resume fields. |
+| `train.resume` | `load_controlnet_from_ckpt()` | Optional pure ControlNet checkpoint. Use `null` when initializing from SD. |
+| `train.resume_kpn` | `cldm.kpn.load_state_dict()` | Optional pure LKPN checkpoint. Use `null` when training LKPN from scratch. |
+| `train.exp_dir` | output setup | Directory for TensorBoard logs and `checkpoints/*.pt`. |
+| `train.learning_rate` | AdamW optimizer | Single LR applied to ControlNet and LKPN parameter groups. |
+| `train.batch_size` | DataLoader | Per-process batch size passed to `DataLoader`. |
+| `train.num_workers` | DataLoader | Number of worker processes for training data loading. |
+| `train.train_steps` | training loop | Total optimizer steps before stopping. |
+| `train.log_every` | TensorBoard scalar logging | Step interval for averaged loss logging. |
+| `train.ckpt_every` | checkpoint writer | Step interval for saving full `ControlLDM.state_dict()`. |
+
+### Validation
+
+Do not add YAML fields that are not read by `train.py` unless the code path is
+implemented in the same change. Removed examples include scheduler-only fields
+without a scheduler and image-log fields without an image logging branch.
+
+Checkpoint files may be direct state dicts or dicts with a `state_dict` entry.
+DDP-style `module.` prefixes are stripped before loading.
+When `resume_full` is used, `train.py` must still freeze `unet`, `vae`, and
+`clip` after loading, because it skips `ControlLDM.load_pretrained_sd()`.
+
+## Scenario: SwanLab Monitoring And Sparse Validation
+
+### 1. Scope / Trigger
+
+- Trigger: editing SwanLab logging, validation data loading, metric keys, or
+  validation scheduling in `train.py` / `configs/train/*.yaml`.
+
+### 2. Signatures
+
+```python
+build_validation_steps(first_step: int, max_steps: int, num_runs: int) -> list[int]
+PairedDirDataset(sharp_dir: str, blur_dir: str, max_images: int | None = None)
+Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
+```
+
+### 3. Contracts
+
+- SwanLab logging is main-process only. Non-main distributed processes must not
+  initialize SwanLab or upload images.
+- `build_validation_steps(1000, 10000, 5)` must produce
+  `[1000, 3250, 5500, 7750, 10000]`.
+- FLOPs are approximate 256x256, batch-1, single `ControlLDM.forward()` FLOPs;
+  do not multiply by diffusion sampling steps.
+- `PairedDirDataset` matches by same relative path first, then by unique
+  filename fallback. GT/LQ image sizes must match.
+- Metric tensors are RGB `[0, 1]`. Training GT stays `[-1, 1]`; validation code
+  converts it back to `[0, 1]` before PSNR/SSIM.
+- SwanLab keys are stable:
+  `param/params`, `param/trainable_params`, `param/FLOPs`,
+  `losses/l_total`, `losses/l_denoise`, `losses/l_kpn_latent`,
+  `learning_rate/lr_controlnet`, `learning_rate/lr_kpn`, `metrics/psnr`,
+  `metrics/ssim`, `visual/vis_psnr`, `visual/vis_ssim`, `visual/pictures`.
+
+### 4. Validation & Error Matrix
+
+| Case | Expected behavior |
+|------|-------------------|
+| `swanlab.enabled: false` | Training imports and runs without importing SwanLab. |
+| `validation.enabled: false` | No validation datasets are constructed. |
+| Missing validation pair | `PairedDirDataset` raises `FileNotFoundError` before training starts. |
+| Duplicate blur filenames for fallback matching | `PairedDirDataset` raises `ValueError`. |
+| FLOPs profiler unsupported | Training continues and skips `param/FLOPs` after printing the exception. |
+
+### 5. Good/Base/Bad Cases
+
+- Good: 2-GPU training logs SwanLab once, while all processes wait during
+  validation.
+- Base: `validation.num_runs: 5` and `train.train_steps: 10000` validates only
+  five times.
+- Bad: running validation only on rank 0 without `accelerator.wait_for_everyone`
+  around it can desynchronize distributed training collectives.
+
+### 6. Tests Required
+
+- On the remote GPU server, run `py_compile` for `train.py`,
+  `model/gaussian_diffusion.py`, `dataset/paired_dir.py`, and
+  `utils/pipeline.py`.
+- Dataset smoke test with two paired images validates length, shape, dtype, and
+  value ranges.
+- Validation schedule smoke test checks the 10K-step example.
+
+### 7. Wrong vs Correct
+
+#### Wrong
+
+```python
+if accelerator.is_local_main_process:
+    run_validation(...)
+# other ranks continue immediately into the next backward()
+```
+
+#### Correct
+
+```python
+accelerator.wait_for_everyone()
+if accelerator.is_local_main_process:
+    run_validation(...)
+accelerator.wait_for_everyone()
+```
 
 ## Forbidden Patterns
 
@@ -41,10 +197,19 @@ shape/device checks over broad refactors.
 - Do not let source comments or README claims override runtime behavior. Verify
   active code paths in `train.py`, `utils/inference.py`, `utils/pipeline.py`,
   and `utils/sampler.py`.
-- Do not treat `dataset/degradation.py` parameters as active training behavior
-  unless `CodeformerDataset.__getitem__()` actually applies them.
+- Do not reintroduce synthetic degradation parameters into
+  `CodeformerDataset` unless `__getitem__()` actually applies them to the
+  paired data path.
 
 ## Verification Checklist
+
+Remote runtime:
+
+- SSH target: `gaoyin@172.28.11.129`
+- Project path: `/data/users/gaoyin/2024_CKB/DeblurDiff`
+- Use this server for dependency-sensitive checks, CUDA/CuPy checks, SwanLab
+  smoke tests, and training/validation dry runs. The local workspace may lack
+  the Python and GPU dependencies required by this project.
 
 For model or sampler changes:
 
@@ -59,6 +224,7 @@ For training changes:
 - Confirm the optimizer only includes intended trainable modules.
 - Confirm `resume` and `resume_kpn` handling is valid for the config in use.
 - Confirm dataset output shapes and value ranges before `vae_encode()`.
+- Confirm `crop_type: random` keeps paired GT/LQ crops aligned.
 
 For inference changes:
 
@@ -74,6 +240,7 @@ For environment changes:
 - The current environment target is Python 3.10 with PyTorch 2.1.2,
   torchvision 0.16.2, `pytorch-cuda=12.1`, `cupy-cuda12x==12.3.0`, and
   `xformers==0.0.23.post1`.
+- SwanLab monitoring uses `swanlab==0.7.16`.
 - Do not reintroduce a mixed CUDA environment such as Conda `cudatoolkit=11.8`
   plus pip `nvidia-*-cu12` packages.
 - After creating the environment, verify both `torch.version.cuda` and
@@ -81,9 +248,6 @@ For environment changes:
 
 ## Known Gaps To Preserve Or Fix Deliberately
 
-- `configs/train/train.yaml` lacks explicit `resume` and `resume_kpn` keys even
-  though `train.py` reads them. Fixing this should be done as a targeted config
-  contract change.
 - `Diffusion.p_losses()` implements latent KPN loss but not the paper's
   pixel-space KPN loss. Add pixel loss only with a clear experiment note because
   it changes training behavior.

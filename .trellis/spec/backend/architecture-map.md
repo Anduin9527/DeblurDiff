@@ -34,7 +34,7 @@ Relevant paper claims:
 | DDPM training loss | `model/gaussian_diffusion.py` | `p_losses()` adds denoising MSE and latent KPN MSE. |
 | Iterative sampling | `utils/sampler.py` | Every reverse step calls `model(x, t, cond)`, so LKPN sees the current `z_t`. |
 | Inference orchestration | `utils/inference.py`, `utils/pipeline.py` | CLI loads checkpoint/config, builds conditions, runs spaced sampling, decodes VAE output, and applies color correction. |
-| Dataset pair contract | `dataset/codeformer.py` | Reads `HR` image path from a list and derives the paired blurred path by replacing `HR` with `Blur`. |
+| Dataset pair contract | `dataset/codeformer.py` | Reads `HR` image path from a list, derives the paired blurred path by replacing `HR` with `Blur`, and applies the same configured crop to both images. |
 
 ## Runtime Flow
 
@@ -42,15 +42,20 @@ Training:
 
 1. `train.py` loads `configs/train/train.yaml`.
 2. `ControlLDM` is instantiated.
-3. SD v2.1 weights are loaded into UNet/VAE/CLIP and frozen.
-4. ControlNet is initialized from the frozen UNet if no resume checkpoint is
-   provided.
+3. If `train.resume_full` is set, a full `ControlLDM.state_dict()` is loaded
+   for fine-tuning and the SD UNet/VAE/CLIP modules are frozen.
+4. Otherwise, SD v2.1 weights are loaded into UNet/VAE/CLIP and frozen, then
+   ControlNet is initialized from the frozen UNet or from optional submodule
+   resume checkpoints.
 5. Only `cldm.controlnet.parameters()` and `cldm.kpn.parameters()` are passed
    to AdamW.
 6. Dataset returns `gt`, `lq`, and `prompt`.
 7. `gt` is encoded to `z_0`; `lq` is encoded as `c_img`.
 8. `Diffusion.p_losses()` samples `z_t`, calls `ControlLDM.forward()`, and
    optimizes denoising plus latent KPN reconstruction loss.
+9. Optional SwanLab monitoring logs training losses, learning rates,
+   parameters, 256x256 single-forward FLOPs, sparse validation metrics, and
+   visual restoration grids from `sharp_dir`/`blur_dir` validation datasets.
 
 Inference:
 
@@ -87,9 +92,12 @@ Inference:
 - The paper reports batch size 128, learning rate `5e-5`, and 100K iterations.
   The checked-in config uses batch size 64, learning rate `1e-4`, and 200K
   steps.
-- The dataset config lists synthetic degradation parameters, but the active
-  dataset path reads pre-generated `HR`/`Blur` image pairs and does not apply
-  those degradation utilities inside `CodeformerDataset.__getitem__()`.
+- The dataset path reads pre-generated `HR`/`Blur` image pairs. Synthetic
+  degradation utilities remain in `dataset/degradation.py`, but they are not
+  part of the active `CodeformerDataset` config interface.
+- Validation uses `dataset/paired_dir.py` with explicit `sharp_dir` and
+  `blur_dir` roots. It is separate from the training `HR`/`Blur` file-list
+  contract.
 
 ## Change-Safety Notes
 
@@ -97,7 +105,7 @@ Inference:
   `latent_channels * kernel_size * kernel_size`.
 - Before editing `model/cldm.py`, verify the condition channel count matches
   `controlnet_cfg.hint_channels`.
-- Before editing dataset logic, verify `train.py` still receives GT in `[-1, 1]`
-  and LQ in `[0, 1]`.
+- Before editing dataset logic, verify paired crop keeps GT/LQ spatially
+  aligned and `train.py` still receives GT in `[-1, 1]` and LQ in `[0, 1]`.
 - Before changing checkpoint loading, verify compatibility with both SD
   checkpoint keys and full `ControlLDM.state_dict()` inference checkpoints.
