@@ -68,6 +68,17 @@ For inference changes:
   sampling does not support guidance.
 - Check output image dimensions match the original unpadded input dimensions.
 
+For environment changes:
+
+- Keep PyTorch, torchvision, xformers, and CuPy on one CUDA line.
+- The current environment target is Python 3.10 with PyTorch 2.1.2,
+  torchvision 0.16.2, `pytorch-cuda=12.1`, `cupy-cuda12x==12.3.0`, and
+  `xformers==0.0.23.post1`.
+- Do not reintroduce a mixed CUDA environment such as Conda `cudatoolkit=11.8`
+  plus pip `nvidia-*-cu12` packages.
+- After creating the environment, verify both `torch.version.cuda` and
+  `cupy.show_config()` before running LKPN/EAC paths.
+
 ## Known Gaps To Preserve Or Fix Deliberately
 
 - `configs/train/train.yaml` lacks explicit `resume` and `resume_kpn` keys even
