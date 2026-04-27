@@ -1,0 +1,5 @@
+{"file": ".trellis/workflow.md", "reason": "Project workflow and conventions"}
+{"file": ".trellis/spec/backend/directory-structure.md", "reason": "Repository layout and ownership boundaries"}
+{"file": ".trellis/spec/backend/index.md", "reason": "DeblurDiff Python/ML spec index"}
+{"file": ".trellis/spec/backend/architecture-map.md", "reason": "Paper-to-code mapping for DeblurDiff"}
+{"file": ".trellis/spec/backend/quality-guidelines.md", "reason": "Quality and verification rules for DeblurDiff changes"}

@@ -1,0 +1,38 @@
+{
+  "id": "00-bootstrap-guidelines",
+  "name": "Bootstrap Guidelines",
+  "description": "Fill in project development guidelines for AI agents",
+  "status": "completed",
+  "dev_type": "docs",
+  "priority": "P1",
+  "creator": "anduin9527",
+  "assignee": "anduin9527",
+  "createdAt": "2026-04-27",
+  "completedAt": "2026-04-27",
+  "commit": null,
+  "subtasks": [
+    {
+      "name": "Record DeblurDiff architecture mapping",
+      "status": "completed"
+    },
+    {
+      "name": "Fill Python/ML repository guidelines",
+      "status": "completed"
+    },
+    {
+      "name": "Remove irrelevant fullstack bootstrap specs",
+      "status": "completed"
+    }
+  ],
+  "children": [],
+  "parent": null,
+  "relatedFiles": [
+    ".trellis/spec/backend/index.md",
+    ".trellis/spec/backend/architecture-map.md",
+    ".trellis/spec/backend/directory-structure.md",
+    ".trellis/spec/backend/quality-guidelines.md"
+  ],
+  "notes": "Project-specific Trellis specs now describe DeblurDiff as a Python/PyTorch research repository; irrelevant frontend/database/API/logging bootstrap templates were removed.",
+  "meta": {},
+  "package": null
+}
