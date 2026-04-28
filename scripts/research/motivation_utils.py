@@ -412,26 +412,58 @@ def plot_internal_maps(
 def plot_runtime_quality(rows: Sequence[Mapping[str, Any]], save_path: Optional[Path] = None) -> plt.Figure:
     data = rows_to_dataframe(rows)
     fig, ax1 = plt.subplots(figsize=(6.5, 4.0))
+    
     if hasattr(data, "groupby"):
-        grouped = data.groupby("steps", as_index=False).agg({
-            "runtime_sec": "mean",
-            "psnr": "mean",
-            "ssim": "mean",
-        }).sort_values("steps")
+        # Runtime (mean) on primary y-axis
+        grouped = data.groupby("steps", as_index=False).agg({"runtime_sec": "mean"}).sort_values("steps")
         steps = grouped["steps"].to_numpy()
         runtime = grouped["runtime_sec"].to_numpy()
-        psnr = grouped["psnr"].to_numpy()
+        
+        ax1.plot(steps, runtime, marker="o", linestyle="--", color="black", label="avg runtime")
+        ax1.set_xlabel("Sampling steps")
+        ax1.set_ylabel("Runtime (sec)", color="black")
+        ax1.tick_params(axis="y", labelcolor="black")
+        
+        ax2 = ax1.twinx()
+        # 1 PSNR curve per image on secondary y-axis
+        for image_id, img_df in data.groupby("image_id"):
+            img_df = img_df.sort_values("steps")
+            ax2.plot(img_df["steps"], img_df["psnr"], marker="s", label=f"{image_id}")
+            
+        ax2.set_ylabel("PSNR")
+        ax2.legend(loc="lower right", fontsize="small")
+        ax1.legend(loc="lower left", fontsize="small")
+        ax1.grid(True, alpha=0.25)
     else:
-        steps = np.array([row["steps"] for row in rows])
-        runtime = np.array([row["runtime_sec"] for row in rows])
-        psnr = np.array([row["psnr"] for row in rows])
-    ax1.plot(steps, runtime, marker="o", label="runtime")
-    ax1.set_xlabel("Sampling steps")
-    ax1.set_ylabel("Runtime (sec)")
-    ax2 = ax1.twinx()
-    ax2.plot(steps, psnr, marker="s", color="tab:orange", label="PSNR")
-    ax2.set_ylabel("PSNR")
-    ax1.grid(True, alpha=0.25)
+        # Fallback if Pandas is not available
+        steps_dict = {}
+        for row in rows:
+            steps_dict.setdefault(row["steps"], []).append(row["runtime_sec"])
+        steps = np.sort(list(steps_dict.keys()))
+        runtime = np.array([np.mean(steps_dict[s]) for s in steps])
+        
+        ax1.plot(steps, runtime, marker="o", linestyle="--", color="black", label="avg runtime")
+        ax1.set_xlabel("Sampling steps")
+        ax1.set_ylabel("Runtime (sec)", color="black")
+        
+        ax2 = ax1.twinx()
+        img_dict = {}
+        for row in rows:
+            img_dict.setdefault(row["image_id"], {"steps": [], "psnr": []})
+            img_dict[row["image_id"]]["steps"].append(row["steps"])
+            img_dict[row["image_id"]]["psnr"].append(row["psnr"])
+            
+        for img_id, d in img_dict.items():
+            sorted_idx = np.argsort(d["steps"])
+            s_arr = np.array(d["steps"])[sorted_idx]
+            p_arr = np.array(d["psnr"])[sorted_idx]
+            ax2.plot(s_arr, p_arr, marker="s", label=f"{img_id}")
+            
+        ax2.set_ylabel("PSNR")
+        ax2.legend(loc="lower right", fontsize="small")
+        ax1.legend(loc="lower left", fontsize="small")
+        ax1.grid(True, alpha=0.25)
+        
     fig.tight_layout()
     if save_path is not None:
         save_path.parent.mkdir(parents=True, exist_ok=True)
