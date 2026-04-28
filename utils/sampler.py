@@ -1,4 +1,4 @@
-from typing import Optional, Tuple, Dict
+from typing import Any, Callable, Optional, Tuple, Dict
 
 import torch
 from torch import nn
@@ -281,7 +281,10 @@ class SpacedSampler(nn.Module):
             cond_fn: Optional[Guidance],
             tiled: bool,
             tile_size: int,
-            tile_stride: int
+            tile_stride: int,
+            trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
+            step_index: int = -1,
+            total_steps: int = -1,
     ) -> torch.Tensor:
         if tiled:
             eps, kpn = self.predict_noise_tiled(model, x, t, cond, uncond, cfg_scale, tile_size, tile_stride)
@@ -297,6 +300,19 @@ class SpacedSampler(nn.Module):
             (index != 0).float().view(-1, *([1] * (len(x.shape) - 1)))
         )
         x_prev = model_mean + nonzero_mask * torch.sqrt(model_variance) * noise
+        if trace_callback is not None:
+            trace_callback({
+                "step_index": step_index,
+                "total_steps": total_steps,
+                "timestep": t,
+                "index": index,
+                "x": x,
+                "x_prev": x_prev,
+                "eps": eps,
+                "pred_x0": pred_x0,
+                "lr_kpn": kpn,
+                "c_img": cond["c_img"],
+            })
         return x_prev, kpn
 
     @torch.no_grad()
@@ -317,6 +333,7 @@ class SpacedSampler(nn.Module):
             x_T: Optional[torch.Tensor] = None,
             progress: bool = True,
             progress_leave: bool = True,
+            trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> torch.Tensor:
         self.make_schedule(steps)
         self.to(device)
@@ -333,7 +350,7 @@ class SpacedSampler(nn.Module):
             index = torch.full_like(ts, fill_value=total_steps - i - 1)
             img, kpn = self.p_sample(
                 model, img, ts, index, cond, uncond, cfg_scale, cond_fn,
-                tiled, tile_size, tile_stride
+                tiled, tile_size, tile_stride, trace_callback, i, total_steps
             )
             if cond_fn and self.context["g_apply"]:
                 loss_val = self.context["g_loss"]

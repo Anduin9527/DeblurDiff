@@ -55,7 +55,7 @@ Training:
    optimizes denoising plus latent KPN reconstruction loss.
 9. Optional SwanLab monitoring logs training losses, learning rates,
    parameters, 256x256 single-forward FLOPs, sparse validation metrics, and
-   visual restoration grids from `sharp_dir`/`blur_dir` validation datasets.
+   restored visual-validation images with per-image PSNR/SSIM captions.
 
 Inference:
 

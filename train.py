@@ -6,7 +6,6 @@ from typing import Dict, List, Optional, Tuple
 from omegaconf import DictConfig, OmegaConf
 import torch
 from torch.utils.data import DataLoader, Subset
-from torchvision.utils import make_grid
 from accelerate import Accelerator
 from accelerate.utils import InitProcessGroupKwargs, set_seed
 from einops import rearrange
@@ -164,13 +163,9 @@ def _metric_tensors(restored: np.ndarray, gt: torch.Tensor) -> Tuple[torch.Tenso
     return restored, gt
 
 
-def _lq_tensor(lq: torch.Tensor) -> torch.Tensor:
-    return rearrange(lq.float(), "b h w c -> b c h w").contiguous().clamp(0, 1)
-
-
-def _swanlab_grid_image(grid: torch.Tensor) -> np.ndarray:
-    grid = rearrange(grid.detach().cpu().clamp(0, 1), "c h w -> h w c")
-    return np.round(grid.numpy() * 255.0).astype(np.uint8)
+def _swanlab_restored_image(image: torch.Tensor) -> np.ndarray:
+    image = rearrange(image.detach().cpu().clamp(0, 1), "c h w -> h w c")
+    return np.round(image.numpy() * 255.0).astype(np.uint8)
 
 
 def evaluate_loader(
@@ -214,15 +209,21 @@ def evaluate_loader(
         )
         restored, gt = _metric_tensors(restored_np, batch["gt"])
         batch_size = restored.shape[0]
-        psnr_sum += peak_signal_noise_ratio(restored, gt, data_range=1.0).item() * batch_size
-        ssim_sum += structural_similarity_index_measure(restored, gt, data_range=1.0).item() * batch_size
+        batch_psnr = []
+        batch_ssim = []
+        for i in range(batch_size):
+            image_psnr = peak_signal_noise_ratio(restored[i:i + 1], gt[i:i + 1], data_range=1.0).item()
+            image_ssim = structural_similarity_index_measure(restored[i:i + 1], gt[i:i + 1], data_range=1.0).item()
+            batch_psnr.append(image_psnr)
+            batch_ssim.append(image_ssim)
+        psnr_sum += sum(batch_psnr)
+        ssim_sum += sum(batch_ssim)
         num_images += batch_size
 
         if collect_images and swanlab is not None:
-            lq = _lq_tensor(batch["lq"])
-            for i, name in enumerate(batch["name"]):
-                grid = make_grid(torch.stack([lq[i], restored[i], gt[i]], dim=0), nrow=3)
-                images.append(swanlab.Image(_swanlab_grid_image(grid), caption=str(name)))
+            for i in range(batch_size):
+                caption = f"psnr:{batch_psnr[i]:.4f};ssim:{batch_ssim[i]:.4f}"
+                images.append(swanlab.Image(_swanlab_restored_image(restored[i]), caption=caption))
 
     return psnr_sum, ssim_sum, num_images, images
 

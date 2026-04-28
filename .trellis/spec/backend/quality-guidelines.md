@@ -146,6 +146,12 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
   filename fallback. GT/LQ image sizes must match.
 - Metric tensors are RGB `[0, 1]`. Training GT stays `[-1, 1]`; validation code
   converts it back to `[0, 1]` before PSNR/SSIM.
+- The current repository implements validation metrics only through
+  TorchMetrics PSNR/SSIM in `train.py`; do not log additional metric keys unless
+  their implementation and dependencies are added in the same change.
+- `visual/pictures` uploads restored images only, not blur/restored/sharp
+  comparison grids. Each SwanLab image caption must use the per-image metric
+  format `psnr:<value>;ssim:<value>`.
 - SwanLab keys are stable:
   `param/params`, `param/trainable_params`, `param/FLOPs`,
   `losses/l_total`, `losses/l_denoise`, `losses/l_kpn_latent`,

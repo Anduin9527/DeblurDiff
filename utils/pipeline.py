@@ -1,4 +1,4 @@
-from typing import overload, Tuple, Optional
+from typing import Any, Callable, Dict, overload, Tuple, Optional
 
 import torch
 from torch import nn
@@ -98,7 +98,8 @@ class Pipeline:
         neg_prompt: str,
         cfg_scale: float,
         better_start: float,
-        progress: bool = True
+        progress: bool = True,
+        trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> torch.Tensor:
         ### preprocess
         bs, _, ori_h, ori_w = clean.shape
@@ -138,7 +139,8 @@ class Pipeline:
         z = sampler.sample(
             model=self.cldm, device=self.device, steps=steps, batch_size=bs, x_size=(4, h // 8, w // 8),
             cond=cond, uncond=uncond, cfg_scale=cfg_scale, x_T=x_T, progress=progress,
-            progress_leave=progress, cond_fn=self.cond_fn, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride
+            progress_leave=progress, cond_fn=self.cond_fn, tiled=tiled, tile_size=tile_size, tile_stride=tile_stride,
+            trace_callback=trace_callback,
         )
         if not tiled:
             x = self.cldm.vae_decode(z)
@@ -162,7 +164,8 @@ class Pipeline:
         neg_prompt: str,
         cfg_scale: float,
         better_start: bool,
-        progress: bool = True
+        progress: bool = True,
+        trace_callback: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> np.ndarray:
         # image to tensor
         lq = torch.tensor((lq / 255.).clip(0, 1), dtype=torch.float32, device=self.device)
@@ -172,7 +175,7 @@ class Pipeline:
         clean = lq
         sample = self.run_diff(
             clean, steps, strength, tiled, tile_size, tile_stride,
-            pos_prompt, neg_prompt, cfg_scale, better_start, progress
+            pos_prompt, neg_prompt, cfg_scale, better_start, progress, trace_callback
         )
         # colorfix (borrowed from StableSR, thanks for their work)
         sample = (sample + 1) / 2
