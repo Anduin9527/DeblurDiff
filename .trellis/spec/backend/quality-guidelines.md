@@ -135,8 +135,9 @@ Diffusion.p_losses(model, x_start, t, cond, return_dict: bool = False)
   `validation.visual.every_n_steps` interval schedule. Keep it offset from
   regular validation steps so long full validation and visual uploads do not
   run in the same training step; the training loop drops visual steps that
-  collide with regular validation. The visual split is small and only the main
-  process uploads SwanLab images.
+  collide with regular validation. The visual split should use the curated
+  `imgs/target` + `imgs/input` 4-image set and only the main process uploads
+  SwanLab images.
 - `build_validation_steps(1000, 10000, 5)` must produce
   `[1000, 3250, 5500, 7750, 10000]`.
 - FLOPs are approximate 256x256, batch-1, single `ControlLDM.forward()` FLOPs;

@@ -143,6 +143,6 @@ validation:
     # train.py drops visual checks that collide with sparse full-val steps.
     first_step: 1562
     every_n_steps: 1562
-    sharp_dir: ~/datasets/deblur/Gopro/test/target
-    blur_dir: ~/datasets/deblur/Gopro/test/input
-    max_images: 8
+    sharp_dir: imgs/target
+    blur_dir: imgs/input
+    max_images: 4

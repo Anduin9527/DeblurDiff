@@ -21,6 +21,9 @@ top-level scripts are thin entry points; most behavior lives in `model/`,
 |-- test.sh                      # single-GPU inference wrapper
 |-- file_img.sh                  # training file-list generator for HR image paths
 |-- run_file.sh                  # cluster/srun wrapper around train.sh
+|-- imgs/                        # curated 4-image paired visual-validation set
+|   |-- input/                   # blurred visual-validation inputs
+|   `-- target/                  # sharp visual-validation references
 |-- configs/
 |   |-- train/train.yaml         # ControlLDM, diffusion, dataset, and training config
 |   `-- inference/*.yaml         # inference-time ControlLDM and diffusion configs
